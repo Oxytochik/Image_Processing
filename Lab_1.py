@@ -70,8 +70,6 @@ img_gamma_high_f = gamma_correction(img_gray_f, gamma_high)
 img_gamma_low_8  = (img_gamma_low_f  * 255.).astype('uint8')
 img_gamma_high_8 = (img_gamma_high_f * 255.).astype('uint8')
 
-# img_gray_f больше не нужен — вместо него img_norm
-# img_gamma_low_f / img_gamma_high_f больше не нужны — вместо них img_gamma_low / img_gamma_high
 
 plt.figure(figsize=(10, 4))
 plt.suptitle('Сравнение с скорректированными', fontsize=16)
