@@ -22,6 +22,12 @@ def salt_pepper_noise(image, rng_range=101, pepper_value=0, salt_value=100):
     noisy_image[ones_pixel] = 255
     return noisy_image
 
+def uniform_noise(image, mean=0, stddev=25):
+    noise = np.zeros(image.shape, np.uint8)
+    cv2.randu(noise, mean, stddev)
+    noisy_image = cv2.add(image, noise)
+    return noisy_image
+
 
 img_gray = cv2.imread('object.jpg', cv2.IMREAD_GRAYSCALE)
 
@@ -211,6 +217,93 @@ print(f"{'NLM 80'} SSIM: {ssim_sp:.3f} MSE: {mse_sp:.3f}")
 plt.title('Соль и Перец NLM 80', fontsize=24)
 plt.axis('off')
 plt.imshow(image_sp_nl_80, cmap='gray')
+plt.show()
+
+#постоянный шум
+
+image_noise_uniform = uniform_noise(img_gray, mean=0, stddev=100)
+
+
+image_uniform_median = cv2.medianBlur(image_noise_uniform, 3)
+
+image_uniform_gauss = cv2.GaussianBlur(image_noise_uniform, (5,5), 0)
+
+image_uniform_bilateral = cv2.bilateralFilter(image_noise_uniform, 9, 150, 9)
+
+image_uniform_nl_10 = cv2.fastNlMeansDenoising(image_noise_uniform, h=10)
+
+image_uniform_nl_30 = cv2.fastNlMeansDenoising(image_noise_uniform, h=30)
+
+image_uniform_nl_50 = cv2.fastNlMeansDenoising(image_noise_uniform, h=50)
+
+
+plt.figure(figsize=(14, 8))
+plt.title('Постоянный', fontsize=24)
+plt.axis('off')
+
+plt.subplot(2, 4, 1)
+plt.title('Original')
+plt.axis('off')
+plt.imshow(img_gray, cmap='gray')
+
+print(f"Uniform:")
+
+mse_sp = mean_squared_error(img_gray, image_noise_uniform)
+ssim_sp = structural_similarity(img_gray, image_noise_uniform)
+print(f"{'Noisy'} SSIM: {ssim_sp:.3f} MSE: {mse_sp:.3f}")
+plt.subplot(2, 4, 2)
+plt.title('Noisy')
+plt.axis('off')
+plt.imshow(image_noise_uniform, cmap='gray')
+
+mse_sp = mean_squared_error(img_gray, image_uniform_median)
+ssim_sp = structural_similarity(img_gray, image_uniform_median)
+print(f"{'Median'} SSIM: {ssim_sp:.3f} MSE: {mse_sp:.3f}")
+plt.subplot(2, 4, 3)
+plt.title('Median')
+plt.axis('off')
+plt.imshow(image_uniform_median, cmap='gray')
+
+mse_sp = mean_squared_error(img_gray, image_uniform_gauss)
+ssim_sp = structural_similarity(img_gray, image_uniform_gauss)
+print(f"{'Gauss'} SSIM: {ssim_sp:.3f} MSE: {mse_sp:.3f}")
+plt.subplot(2, 4, 4)
+plt.title('Gauss')
+plt.axis('off')
+plt.imshow(image_uniform_gauss, cmap='gray')
+
+
+mse_sp = mean_squared_error(img_gray, image_uniform_bilateral)
+ssim_sp = structural_similarity(img_gray, image_uniform_bilateral)
+print(f"{'Bilateral'} SSIM: {ssim_sp:.3f} MSE: {mse_sp:.3f}")
+plt.subplot(2, 4, 5)
+plt.title('Bilateral')
+plt.axis('off')
+plt.imshow(image_uniform_bilateral, cmap='gray')
+
+mse_sp = mean_squared_error(img_gray, image_uniform_nl_10)
+ssim_sp = structural_similarity(img_gray, image_uniform_nl_10)
+print(f"{'NLM 10'} SSIM: {ssim_sp:.3f} MSE: {mse_sp:.3f}")
+plt.subplot(2, 4, 6)
+plt.title('NLM 10')
+plt.axis('off')
+plt.imshow(image_uniform_nl_10, cmap='gray')
+
+mse_sp = mean_squared_error(img_gray, image_uniform_nl_30)
+ssim_sp = structural_similarity(img_gray, image_uniform_nl_30)
+print(f"{'NLM 30'} SSIM: {ssim_sp:.3f} MSE: {mse_sp:.3f}")
+plt.subplot(2, 4, 7)
+plt.title('NLM 30')
+plt.axis('off')
+plt.imshow(image_uniform_nl_30, cmap='gray')
+
+mse_sp = mean_squared_error(img_gray, image_uniform_nl_50)
+ssim_sp = structural_similarity(img_gray, image_uniform_nl_50)
+print(f"{'NLM 50'} SSIM: {ssim_sp:.3f} MSE: {mse_sp:.3f}")
+plt.subplot(2, 4, 8)
+plt.title('NLM 50')
+plt.axis('off')
+plt.imshow(image_uniform_nl_50, cmap='gray')
 plt.show()
 
 
