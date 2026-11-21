@@ -1,109 +1,111 @@
 import numpy as np
-import cv2 as cv
+import cv2
 import matplotlib.pyplot as plt
 
 
-image = cv.imread('periodic_noise.JPG', cv.IMREAD_GRAYSCALE)
-
+image = cv2.imread('lab_6_haar.jpg', cv2.IMREAD_GRAYSCALE)
 h, w = image.shape
-s = min(h, w)
-
-image = cv.resize(
-    image[(h-s)//2:(h-s)//2+s, (w-s)//2:(w-s)//2+s],
-    (512, 512)
-)
 
 
 def haar(image, levels):
-    c = image.astype(np.float32)
+    result = image.astype(np.float32)
 
     for level in range(levels):
-        n = c.shape[0] >> level
-        b = c[:n, :n]
+        h = image.shape[0] // (2**level)
+        w = image.shape[1] // (2**level)
 
-        b = np.hstack((
-            (b[:, 0::2] + b[:, 1::2]) / 2,
-            (b[:, 0::2] - b[:, 1::2]) / 2
-        ))
+        block = result[:h, :w].copy()
+        temp = np.empty_like(block)
 
-        c[:n, :n] = np.vstack((
-            (b[0::2] + b[1::2]) / 2,
-            (b[0::2] - b[1::2]) / 2
-        ))
+        left = block[:, ::2]
+        right = block[:, 1::2]
 
-    return c
+        temp[:, :w//2] = (left + right) / 2
+        temp[:, w//2:] = (left - right) / 2
+
+        top = temp[::2, :]
+        bottom = temp[1::2, :]
+
+        result[:h//2, :w] = (top + bottom) / 2
+        result[h//2:h, :w] = (top - bottom) / 2
+
+    return result
 
 
 def ihaar(coef, levels):
-    c = coef.copy()
+    result = coef.copy()
 
-    for level in range(levels - 1, -1, -1):
-        n = c.shape[0] >> level
-        k = n // 2
-        b = c[:n, :n]
-        t = np.empty_like(b)
+    for level in reversed(range(levels)):
+        h = coef.shape[0] // (2**level)
+        w = coef.shape[1] // (2**level)
 
-        t[0::2] = b[:k] + b[k:]
-        t[1::2] = b[:k] - b[k:]
+        block = result[:h, :w].copy()
+        temp = np.empty_like(block)
 
-        c[:n, :n][:, 0::2] = t[:, :k] + t[:, k:]
-        c[:n, :n][:, 1::2] = t[:, :k] - t[:, k:]
+        average = block[:h//2, :]
+        detail = block[h//2:, :]
 
-    return c
+        temp[::2, :] = average + detail
+        temp[1::2, :] = average - detail
+
+        average = temp[:, :w//2]
+        detail = temp[:, w//2:]
+
+        result[:h, :w:2] = average + detail
+        result[:h, 1:w:2] = average - detail
+
+    return result
 
 
 plt.figure(figsize=(16, 4))
 
 plt.subplot(1, 4, 1)
 plt.imshow(image, cmap='gray', vmin=0, vmax=255)
-plt.title('Исходное 512×512')
-plt.axis('off')
+plt.title('Оригинал')
 
 for level in range(1, 4):
     coef = haar(image, level)
-    n = 512 >> level
 
-    # Усиление деталей только для отображения.
+    rows = h // (2**level)
+    cols = w // (2**level)
+
     vis = np.clip(np.abs(coef) * 5, 0, 255)
-    vis[:n, :n] = coef[:n, :n]
+    vis[:rows, :cols] = coef[:rows, :cols]
 
     plt.subplot(1, 4, level + 1)
     plt.imshow(vis, cmap='gray', vmin=0, vmax=255)
-    plt.title(f'{level} ступень, LL {n}×{n}')
-    plt.axis('off')
+    plt.title(f'{level} ступень, LL {rows}×{cols}')
 
 plt.tight_layout()
 plt.show()
 
 
 coef = haar(image, 3)
-print('Ошибка восстановления:', np.abs(ihaar(coef, 3) - image).max())
+reconstructed = ihaar(coef, 3)
+
+error = np.abs(reconstructed - image).max()
+print('Ошибка восстановления:', error)
 
 
-#
 compressed = coef.copy()
 compressed[np.abs(compressed) < 5] = 0
 
-compressed[:64, :64] = coef[:64, :64]
+compressed[:h//8, :w//8] = coef[:h//8, :w//8]
 
 restored = np.clip(ihaar(compressed, 3), 0, 255)
 
-print('Нулевых коэффициентов:',
-      round(np.mean(compressed == 0) * 100, 1), '%')
-print('MSE:', round(np.mean((restored - image) ** 2), 2))
 
+print('MSE:', round(np.mean((restored - image)**2), 2))
 
-plt.figure(figsize=(10, 5))
+plt.figure(figsize=(12, 5))
 
 plt.subplot(1, 2, 1)
 plt.imshow(image, cmap='gray', vmin=0, vmax=255)
-plt.title('Исходное')
-plt.axis('off')
+plt.title('Оригинал')
 
 plt.subplot(1, 2, 2)
 plt.imshow(restored, cmap='gray', vmin=0, vmax=255)
-plt.title('После обнуления слабых деталей')
-plt.axis('off')
+plt.title('Восстановленное изображение после сжатия')
 
 plt.tight_layout()
 plt.show()

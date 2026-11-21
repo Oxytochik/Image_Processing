@@ -1,272 +1,260 @@
+import random
+from pathlib import Path
+
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-from pathlib import Path
-import random
 
+from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import (
-    confusion_matrix,
-    accuracy_score,
-    classification_report,
+from sklearn.metrics import accuracy_score, classification_report
+
+
+# 1. Параметры и разделение файлов
+
+DATA = Path('data')
+IMAGE_SIZE = 32
+K_VALUES = list(range(1, 16, 2))
+NUM_TESTS = 5
+SYMBOL_NAMES = {'times': '×'}
+best_k = 1
+
+files, labels = [], []
+
+for folder in sorted(DATA.iterdir()):
+    if folder.is_dir():
+        for path in sorted(folder.iterdir()):
+            if path.is_file() and path.suffix.lower() in {
+                '.jpg', '.jpeg', '.png', '.bmp'
+            }:
+                files.append(path)
+                labels.append(folder.name)
+
+train_paths, test_paths, y_train, y_test = train_test_split(
+    files, labels,
+    test_size=0.3,
+    stratify=labels,
+    random_state=42
 )
 
+test_files = {}
+for path, label in zip(test_paths, y_test):
+    test_files.setdefault(label, []).append(path)
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
-SYMBOL_NAMES = {"times": "×"}
-
-
-def split_symbol_files(data_dir=DATA_DIR, test_fraction=0.3, seed=42):
-    data_dir = Path(data_dir)
-    if not data_dir.is_dir():
-        raise FileNotFoundError(f"Распакуйте папки классов в {data_dir}")
-
-    rng = random.Random(seed)
-    train_files, test_files = {}, {}
-    for folder in sorted(data_dir.iterdir()):
-        if not folder.is_dir():
-            continue
-        files = sorted(
-            p for p in folder.iterdir()
-            if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
-        )
-        if not files:
-            continue
-        if len(files) < 2:
-            raise ValueError(f"В {folder} нужно минимум два изображения")
-        rng.shuffle(files)
-        count = max(1, min(len(files) - 1, round(len(files) * test_fraction)))
-        train_files[folder.name] = files[count:]
-        test_files[folder.name] = files[:count]
-
-    if not test_files:
-        raise ValueError(f"В {data_dir} не найдены изображения в папках классов")
-    return train_files, test_files
+print('Количество классов:', len(set(labels)))
 
 
-def read_symbol(path, height=48):
-    image = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
-    if image is None:
-        raise ValueError(f"Не удалось прочитать изображение {path}")
-
-    _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    border = np.concatenate((binary[0], binary[-1], binary[:, 0], binary[:, -1]))
-    if np.median(border) < 127:
-        binary = cv2.bitwise_not(binary)
-
-    points = cv2.findNonZero(cv2.bitwise_not(binary))
-    if points is None:
-        raise ValueError(f"Пустое изображение {path}")
-    x, y, w, h = cv2.boundingRect(points)
-    symbol = binary[y:y + h, x:x + w]
-    width = max(1, round(w * height / h))
-    return cv2.resize(symbol, (width, height), interpolation=cv2.INTER_NEAREST)
-
+# 2. Подготовка символов и сбор датасета
 
 def prepare_symbol(image):
-    points = cv2.findNonZero((image > 127).astype(np.uint8))
+    image = cv2.erode(image, np.ones((3, 3), np.uint8))
+    _, binary = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY_INV)
+
+    points = cv2.findNonZero(binary)
     if points is None:
-        raise ValueError("Пустой фрагмент символа")
+        raise ValueError('Пустое изображение')
+
     x, y, w, h = cv2.boundingRect(points)
-    image = cv2.resize(image[y:y+h, x:x+w], (32, 32))
-    return image.astype(np.float32).reshape(-1) / 255
+    symbol = binary[y:y+h, x:x+w]
+
+    scale = 24 / max(h, w)
+    width = max(1, round(w * scale))
+    height = max(1, round(h * scale))
+
+    symbol = cv2.resize(
+        symbol, (width, height), interpolation=cv2.INTER_AREA
+    )
+    symbol = np.where(symbol > 0, 255, 0).astype(np.uint8)
+
+    result = np.zeros((IMAGE_SIZE, IMAGE_SIZE), np.uint8)
+    x = (IMAGE_SIZE - width) // 2
+    y = (IMAGE_SIZE - height) // 2
+    result[y:y+height, x:x+width] = symbol
+
+    return result.flatten().astype(np.float32) / 255
 
 
-def make_dataset(files_by_class):
-    vectors, labels = [], []
-    for label, paths in files_by_class.items():
-        for path in paths:
-            symbol = read_symbol(path)
-            symbol = cv2.copyMakeBorder(
-                symbol, 3, 3, 3, 3, cv2.BORDER_CONSTANT, value=255
-            )
-            symbol = cv2.erode(symbol, np.ones((3, 3), np.uint8), iterations=1)
-            vectors.append(prepare_symbol(cv2.bitwise_not(symbol)))
-            labels.append(label)
-    return np.asarray(vectors), np.asarray(labels)
+def make_dataset(paths):
+    vectors = []
+
+    for path in paths:
+        image = cv2.imdecode(
+            np.fromfile(path, np.uint8), cv2.IMREAD_GRAYSCALE
+        )
+        if image is None:
+            raise ValueError(f'Не удалось прочитать {path}')
+
+        vectors.append(prepare_symbol(image))
+
+    return np.asarray(vectors)
 
 
+X_train = make_dataset(train_paths)
+X_test = make_dataset(test_paths)
+
+print('Обучение:', X_train.shape)
+print('Тест:', X_test.shape)
 
 
-train_files, test_files = split_symbol_files()
+# 3. Независимый блок валидации
+# Можно удалить целиком — тогда останется best_k = 1.
+
+X_fit, X_valid, y_fit, y_valid = train_test_split(
+    X_train, y_train,
+    test_size=min(3000, int(np.ceil(len(y_train) * 0.2))),
+    stratify=y_train,
+    random_state=42
+)
+
+scores = []
+
+for k in K_VALUES:
+    model = KNeighborsClassifier(n_neighbors=k, n_jobs=-1)
+    model.fit(X_fit, y_fit)
+
+    acc = accuracy_score(y_valid, model.predict(X_valid))
+    scores.append(acc)
+    print(f'k = {k}, accuracy = {acc:.4f}')
+
+best_k = K_VALUES[int(np.argmax(scores))]
+print('Лучшее k:', best_k)
+
+plt.figure(figsize=(8, 4))
+plt.plot(K_VALUES, scores, 'o-')
+plt.xlabel('k')
+plt.ylabel('Accuracy')
+plt.xticks(K_VALUES)
+plt.grid()
+plt.tight_layout()
+plt.show()
+
+del X_fit, X_valid, y_fit, y_valid, model
+
+# Конец блока валидации.
 
 
+# 4. Итоговое обучение и проверка
 
-
-X_train, y_train = make_dataset(train_files)
-X_test, y_test = make_dataset(test_files)
-
-
-
-
-classifier = KNeighborsClassifier(n_neighbors=1)
+classifier = KNeighborsClassifier(n_neighbors=best_k, n_jobs=-1)
 classifier.fit(X_train, y_train)
 
+predicted = classifier.predict(X_test)
+print('Accuracy, test:', accuracy_score(y_test, predicted))
+print(classification_report(y_test, predicted, zero_division=0))
 
 
+# 5. Генерация строки из тестовых изображений
 
-y_pred = classifier.predict(X_test)
-print("Accuracy:", accuracy_score(y_test, y_pred))
-print(confusion_matrix(y_test, y_pred))
-print(classification_report(y_test, y_pred, zero_division=0))
-
-
-
-
-def generate_sequence(symbol_files, max_symbols=10, space_probability=0.25, seed=None):
-    if max_symbols < 1 or not 0 <= space_probability <= 1:
-        raise ValueError("max_symbols >= 1, space_probability от 0 до 1")
-    if not symbol_files or any(not files for files in symbol_files.values()):
-        raise ValueError("Нужны непустые списки изображений классов")
-
-    rng = random.Random(seed)
-    count = rng.randint(1, max_symbols)
-    classes = sorted(symbol_files)
+def generate_sequence(max_symbols=10, space_probability=0.25):
     images, gaps, text = [], [], []
 
-    for i in range(count):
-        label = rng.choice(classes)
-        path = rng.choice(symbol_files[label])
-        images.append(read_symbol(path))
+    for i in range(random.randint(1, max_symbols)):
+        label = random.choice(sorted(test_files))
+        path = random.choice(test_files[label])
+
+        image = cv2.imdecode(
+            np.fromfile(path, np.uint8), cv2.IMREAD_GRAYSCALE
+        )
+        if image is None:
+            raise ValueError(f'Не удалось прочитать {path}')
+
+        images.append(image)
+
         if i:
-            is_space = rng.random() < space_probability
-            gaps.append(30 if is_space else 10)
+            is_space = random.random() < space_probability
+            gaps.append(45 if is_space else 10)
             if is_space:
-                text.append(" ")
+                text.append(' ')
+
         text.append(SYMBOL_NAMES.get(label, label))
 
-    margin = 12
-    width = 2 * margin + sum(image.shape[1] for image in images) + sum(gaps)
-    canvas = np.full((48 + 2 * margin, width), 255, dtype=np.uint8)
-    x = margin
+    height = max(img.shape[0] for img in images)
+    width = 24 + sum(img.shape[1] for img in images) + sum(gaps)
+    canvas = np.full((height + 24, width), 255, np.uint8)
+
+    x = 12
     for i, image in enumerate(images):
         if i:
             x += gaps[i - 1]
-        canvas[margin:margin + image.shape[0], x:x + image.shape[1]] = image
-        x += image.shape[1]
+
+        h, w = image.shape
+        y = 12 + (height - h) // 2
+        canvas[y:y+h, x:x+w] = image
+        x += w
+
+    return canvas, ''.join(text)
 
 
-    return cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR), "".join(text)
+# 6. Выделение символов, распознавание и пробелы
 
-img, expected_text = generate_sequence(test_files, max_symbols=10)
-print("Правильная строка:", expected_text)
+def recognize_sequence(image):
+    gray = cv2.erode(image, np.ones((3, 3), np.uint8))
+    _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
 
+    contours, _ = cv2.findContours(
+        binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
 
+    boxes = sorted(
+        (cv2.boundingRect(c) for c in contours),
+        key=lambda box: box[0]
+    )
+    boxes = [(x, y, w, h) for x, y, w, h in boxes if w * h > 50]
 
+    marked = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    if not boxes:
+        return '', marked
 
-img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    vectors = [
+        prepare_symbol(image[y:y+h+3, x:x+w+5])
+        for x, y, w, h in boxes
+    ]
+    predicted = classifier.predict(vectors)
 
-kernel = np.ones((3, 3), np.uint8)
-img_gray = cv2.erode(img_gray, kernel, iterations=1)
+    result = ''
+    previous_end = None
 
-img_gray = cv2.bitwise_not(img_gray)
+    for (x, y, w, h), label in zip(boxes, predicted):
+        if previous_end is not None and x - previous_end > 40:
+            result += ' '
 
-base_size = img_gray.shape[0] + 6, img_gray.shape[1] + 6
-base = np.zeros(base_size, dtype=np.uint8)
+        result += SYMBOL_NAMES.get(label, label)
+        previous_end = x + w
 
-base[
-    3:img_gray.shape[0] + 3,
-    3:img_gray.shape[1] + 3
-] = img_gray
+        cv2.rectangle(marked, (x, y), (x+w, y+h), (255, 0, 0), 1)
 
-base = cv2.cvtColor(base, cv2.COLOR_GRAY2RGB)
-img_rgb = base
-
-plt.imshow(img_rgb)
-plt.show()
-
-
-
-
-ret, thresh = cv2.threshold(img_rgb, 127, 255, 0)
-thresh = np.uint8(thresh)
-
-contours, h = cv2.findContours(
-    thresh[:, :, 0],
-    cv2.RETR_EXTERNAL,
-    2,
-)
-
-print(len(contours))
+    return result, marked
 
 
+# 7. Проверка пяти строк
 
+matches = 0
 
-crops = []
+for i in range(NUM_TESTS):
+    image, expected = generate_sequence()
+    recognized, marked = recognize_sequence(image)
 
-for i in range(len(contours)):
-    cnt = contours[i]
-    x, y, w, h = cv2.boundingRect(cnt)
+    is_match = expected == recognized
+    matches += int(is_match)
 
-    if w * h > 50:
-        cv2.rectangle(
-            img_rgb,
-            (x, y),
-            (x + w, y + h),
-            (0, 0, 255),
-            2,
-        )
+    print(f'\nСтрока {i + 1}')
+    print('Исходная:  ', expected)
+    print('Распознано:', recognized)
+    print('Совпадение:', is_match)
 
-        crops.append([x, y, w, h])
+    plt.figure(figsize=(12, 5))
 
-print(crops)
+    plt.subplot(2, 1, 1)
+    plt.imshow(image, cmap='gray', vmin=0, vmax=255)
+    plt.title('Исходная: ' + expected)
+    plt.axis('off')
 
-plt.imshow(img_rgb)
-plt.show()
+    plt.subplot(2, 1, 2)
+    plt.imshow(marked)
+    plt.title('Распознано: ' + recognized)
+    plt.axis('off')
 
-
-
-
-data_img = []
-
-for i in range(len(crops)):
-    x, y, w, h = crops[i]
-
-    x -= 3
-    y -= 3
-
-
-    w += 5
-    h += 3
-
-    img = img_gray[y:y+h, x:x+w]
-
-
-    base_size = img.shape[0] + 2, img.shape[1] + 30
-    base = np.zeros(base_size, dtype=np.uint8)
-
-    base[
-        1:img.shape[0] + 1,
-        15:img.shape[1] + 15
-    ] = img
-
-    data_img.append((x, base))
-
-    plt.imshow(base, cmap="gray")
+    plt.tight_layout()
     plt.show()
 
-
-
-
-data_img.sort(key=lambda item: item[0])
-symbol_vectors = [prepare_symbol(image) for x, image in data_img]
-
-
-
-recognized_text = ""
-
-if symbol_vectors:
-    labels = classifier.predict(symbol_vectors)
-    ordered_crops = sorted(crops, key=lambda crop: crop[0])
-
-    for i, label in enumerate(labels):
-        if i:
-            previous_x, _, previous_w, _ = ordered_crops[i - 1]
-            gap = ordered_crops[i][0] - (previous_x + previous_w)
-            if gap > 20:
-                recognized_text += " "
-        recognized_text += SYMBOL_NAMES.get(label, label)
-
-print("Правильная строка:", expected_text)
-print("Распознано:", recognized_text)
+print(f'\nПолных совпадений: {matches}/{NUM_TESTS}')
